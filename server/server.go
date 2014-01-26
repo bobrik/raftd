@@ -163,6 +163,11 @@ func (s *Server) readHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func (s *Server) writeHandler(w http.ResponseWriter, req *http.Request) {
+	if s.raftServer.Leader() != "" && s.raftServer.Leader() != s.raftServer.Name() {
+		s.forwardToLeader(w, req)
+		return
+	}
+
 	vars := mux.Vars(req)
 
 	// Read the value from the POST body.
@@ -175,6 +180,18 @@ func (s *Server) writeHandler(w http.ResponseWriter, req *http.Request) {
 
 	// Execute the command against the Raft server.
 	_, err = s.raftServer.Do(command.NewWriteCommand(vars["key"], value))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	}
+}
+
+func (s *Server) forwardToLeader(w http.ResponseWriter, req *http.Request) {
+	peers := s.raftServer.Peers()
+	peer := peers[s.raftServer.Leader()]
+
+	defer req.Body.Close()
+	_, err := http.Post(peer.ConnectionString + req.RequestURI, "application/x-www-form-urlencoded", req.Body)
+
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
